@@ -4,7 +4,7 @@
 
 import { getModels } from "../../models.ts";
 import type { Api, Model } from "../../types.ts";
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.ts";
+import type { OAuthCredentials, OAuthDeviceCodeInfo, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.ts";
 
 type CopilotCredentials = OAuthCredentials & {
 	enterpriseUrl?: string;
@@ -326,6 +326,7 @@ async function enableAllGitHubCopilotModels(
  */
 export async function loginGitHubCopilot(options: {
 	onAuth: (url: string, instructions?: string) => void;
+	onDeviceCode?: (info: OAuthDeviceCodeInfo) => void;
 	onPrompt: (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
 	onProgress?: (message: string) => void;
 	signal?: AbortSignal;
@@ -348,7 +349,17 @@ export async function loginGitHubCopilot(options: {
 	const domain = enterpriseDomain || "github.com";
 
 	const device = await startDeviceFlow(domain);
-	options.onAuth(device.verification_uri, `Enter code: ${device.user_code}`);
+	if (options.onDeviceCode) {
+		options.onDeviceCode({
+			userCode: device.user_code,
+			verificationUri: device.verification_uri,
+			instructions: `Enter code: ${device.user_code}`,
+			intervalSeconds: device.interval,
+			expiresInSeconds: device.expires_in,
+		});
+	} else {
+		options.onAuth(device.verification_uri, `Enter code: ${device.user_code}`);
+	}
 
 	const githubAccessToken = await pollForGitHubAccessToken(
 		domain,
@@ -372,6 +383,7 @@ export const githubCopilotOAuthProvider: OAuthProviderInterface = {
 	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
 		return loginGitHubCopilot({
 			onAuth: (url, instructions) => callbacks.onAuth({ url, instructions }),
+			onDeviceCode: callbacks.onDeviceCode,
 			onPrompt: callbacks.onPrompt,
 			onProgress: callbacks.onProgress,
 			signal: callbacks.signal,

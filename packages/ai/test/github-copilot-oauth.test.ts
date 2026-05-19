@@ -29,6 +29,66 @@ describe("GitHub Copilot OAuth device flow", () => {
 		vi.useRealTimers();
 	});
 
+	it("reports device-code details through onDeviceCode when available", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-03-09T00:00:00Z"));
+
+		const fetchMock = vi.fn(async (input: unknown): Promise<Response> => {
+			const url = getUrl(input);
+
+			if (url.endsWith("/login/device/code")) {
+				return jsonResponse({
+					device_code: "device-code",
+					user_code: "ABCD-EFGH",
+					verification_uri: "https://github.com/login/device",
+					interval: 1,
+					expires_in: 900,
+				});
+			}
+
+			if (url.endsWith("/login/oauth/access_token")) {
+				return jsonResponse({ access_token: "ghu_refresh_token" });
+			}
+
+			if (url.includes("/copilot_internal/v2/token")) {
+				return jsonResponse({
+					token: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
+					expires_at: 9999999999,
+				});
+			}
+
+			if (url.includes("/models/") && url.endsWith("/policy")) {
+				return new Response("", { status: 200 });
+			}
+
+			throw new Error(`Unexpected fetch URL: ${url}`);
+		});
+
+		vi.stubGlobal("fetch", fetchMock);
+
+		const onAuth = vi.fn();
+		const onDeviceCode = vi.fn();
+		const loginPromise = loginGitHubCopilot({
+			onAuth,
+			onDeviceCode,
+			onPrompt: async () => "",
+		});
+
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(onDeviceCode).toHaveBeenCalledWith({
+			userCode: "ABCD-EFGH",
+			verificationUri: "https://github.com/login/device",
+			instructions: "Enter code: ABCD-EFGH",
+			intervalSeconds: 1,
+			expiresInSeconds: 900,
+		});
+		expect(onAuth).not.toHaveBeenCalled();
+
+		await vi.advanceTimersByTimeAsync(1200);
+		await loginPromise;
+	});
+
 	it("waits before the first poll and increases the safety margin after slow_down", async () => {
 		vi.useFakeTimers();
 		const startTime = new Date("2026-03-09T00:00:00Z");
